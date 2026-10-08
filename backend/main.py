@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from backend.database import test_database_connection
 
 app = FastAPI(
     title="AI-Powered Credit Card Fraud Detection API",
@@ -15,6 +16,14 @@ def root():
 
 @app.get("/health")
 def health():
+    database_status = "connected"
+
+    try:
+        test_database_connection()
+    except Exception:
+        database_status = "disconnected"
+
     return {
-        "status": "healthy"
+        "status": "healthy",
+        "database": database_status
     }
