@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from backend.database import test_database_connection
+from backend.schemas import TransactionInput
 
 app = FastAPI(
     title="AI-Powered Credit Card Fraud Detection API",
@@ -26,4 +27,12 @@ def health():
     return {
         "status": "healthy",
         "database": database_status
+    }
+
+@app.post("/transactions/test")
+def test_transaction(transaction: TransactionInput):
+    return {
+        "message": "Transaction data is valid",
+        "transaction_id": transaction.transaction_id,
+        "amount": transaction.Amount
     }
