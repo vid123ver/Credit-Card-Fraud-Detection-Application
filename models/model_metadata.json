@@ -1,0 +1,13 @@
+{
+    "model_name": "Random Forest",
+    "model_version": "v1",
+    "model_file": "models/random_forest_v1.pkl",
+    "scaler_file": "models/model_scaler.pkl",
+    "training_date": "2026-10-07 21:50:31",
+    "precision": 0.8974358974358975,
+    "recall": 0.7368421052631579,
+    "f1_score": 0.8092485549132948,
+    "roc_auc": 0.964553419877384,
+    "pr_auc": 0.8091907728052026,
+    "threshold": 0.5
+}
