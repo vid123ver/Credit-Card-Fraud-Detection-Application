@@ -33,12 +33,13 @@ FEATURE_COLUMNS = (
 )
 
 
-def predict_transaction(transaction):
-    transaction_data = transaction.model_dump(
-        exclude={"transaction_id"}
-    )
+def predict_transactions(transactions):
+    records = [
+        transaction.model_dump(exclude={"transaction_id"})
+        for transaction in transactions
+    ]
 
-    df = pd.DataFrame([transaction_data])
+    df = pd.DataFrame(records)
 
     df["Time_hours"] = df["Time"] / 3600
     df["Amount_log"] = np.log1p(df["Amount"])
@@ -52,25 +53,31 @@ def predict_transaction(transaction):
     df = df[FEATURE_COLUMNS]
 
     scaled_data = scaler.transform(df)
+    probabilities = model.predict_proba(scaled_data)[:, 1]
 
-    fraud_probability = float(
-        model.predict_proba(scaled_data)[0][1]
-    )
+    results = []
 
-    prediction = (
-        "Fraud"
-        if fraud_probability >= THRESHOLD
-        else "Legitimate"
-    )
+    for transaction, probability in zip(transactions, probabilities):
+        probability = float(probability)
 
-    return {
-        "transaction_id": transaction.transaction_id,
-        "fraud_probability": round(fraud_probability, 4),
-        "fraud_probability_percent": round(
-            fraud_probability * 100, 2
-        ),
-        "prediction": prediction,
-        "threshold": THRESHOLD,
-        "model": "Random Forest",
-        "model_version": "v1",
-    }
+        results.append({
+            "transaction_id": transaction.transaction_id,
+            "fraud_probability": round(probability, 4),
+            "fraud_probability_percent": round(
+                probability * 100, 2
+            ),
+            "prediction": (
+                "Fraud"
+                if probability >= THRESHOLD
+                else "Legitimate"
+            ),
+            "threshold": THRESHOLD,
+            "model": "Random Forest",
+            "model_version": "v1",
+        })
+
+    return results
+
+
+def predict_transaction(transaction):
+    return predict_transactions([transaction])[0]

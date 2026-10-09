@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from backend.database import test_database_connection
 from backend.schemas import TransactionInput
 from backend.predictor import predict_transaction
-
+from backend.batch_schemas import BatchPredictionInput
+from backend.predictor import predict_transactions
 app = FastAPI(
     title="AI-Powered Credit Card Fraud Detection API",
     version="1.0.0"
@@ -44,3 +45,13 @@ def test_transaction(transaction: TransactionInput):
 @app.post("/predict")
 def predict(transaction: TransactionInput):
     return predict_transaction(transaction)
+
+
+@app.post("/predict/batch")
+def predict_batch(batch: BatchPredictionInput):
+    predictions = predict_transactions(batch.transactions)
+
+    return {
+        "total_transactions": len(predictions),
+        "predictions": predictions
+    }
