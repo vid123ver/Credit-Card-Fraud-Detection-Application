@@ -1,6 +1,9 @@
+
 from fastapi import FastAPI
+
 from backend.database import test_database_connection
 from backend.schemas import TransactionInput
+from backend.predictor import predict_transaction
 
 app = FastAPI(
     title="AI-Powered Credit Card Fraud Detection API",
@@ -17,10 +20,9 @@ def root():
 
 @app.get("/health")
 def health():
-    database_status = "connected"
-
     try:
         test_database_connection()
+        database_status = "connected"
     except Exception:
         database_status = "disconnected"
 
@@ -29,6 +31,7 @@ def health():
         "database": database_status
     }
 
+
 @app.post("/transactions/test")
 def test_transaction(transaction: TransactionInput):
     return {
@@ -36,3 +39,8 @@ def test_transaction(transaction: TransactionInput):
         "transaction_id": transaction.transaction_id,
         "amount": transaction.Amount
     }
+
+
+@app.post("/predict")
+def predict(transaction: TransactionInput):
+    return predict_transaction(transaction)
