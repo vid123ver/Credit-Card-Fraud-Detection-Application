@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models" / "random_forest_v1.pkl"
 SCALER_PATH = BASE_DIR / "models" / "model_scaler.pkl"
 
-THRESHOLD = 0.50
+DEFAULT_THRESHOLD = 0.50
 
 model = joblib.load(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
@@ -33,7 +33,15 @@ FEATURE_COLUMNS = (
 )
 
 
-def predict_transactions(transactions):
+def get_risk_level(probability):
+    if probability >= 0.70:
+        return "High"
+    if probability >= 0.30:
+        return "Medium"
+    return "Low"
+
+
+def predict_transactions(transactions, threshold=DEFAULT_THRESHOLD):
     records = [
         transaction.model_dump(exclude={"transaction_id"})
         for transaction in transactions
@@ -63,15 +71,12 @@ def predict_transactions(transactions):
         results.append({
             "transaction_id": transaction.transaction_id,
             "fraud_probability": round(probability, 4),
-            "fraud_probability_percent": round(
-                probability * 100, 2
-            ),
+            "fraud_probability_percent": round(probability * 100, 2),
             "prediction": (
-                "Fraud"
-                if probability >= THRESHOLD
-                else "Legitimate"
+                "Fraud" if probability >= threshold else "Legitimate"
             ),
-            "threshold": THRESHOLD,
+            "risk_level": get_risk_level(probability),
+            "threshold": threshold,
             "model": "Random Forest",
             "model_version": "v1",
         })
@@ -79,5 +84,5 @@ def predict_transactions(transactions):
     return results
 
 
-def predict_transaction(transaction):
-    return predict_transactions([transaction])[0]
+def predict_transaction(transaction, threshold=DEFAULT_THRESHOLD):
+    return predict_transactions([transaction], threshold)[0]

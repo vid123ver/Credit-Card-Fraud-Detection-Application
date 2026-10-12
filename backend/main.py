@@ -3,7 +3,11 @@ from fastapi import FastAPI
 
 from backend.database import test_database_connection
 from backend.schemas import TransactionInput
-from backend.predictor import predict_transaction
+from backend.predictor import (
+    predict_transaction,
+    predict_transactions,
+    DEFAULT_THRESHOLD,
+)
 from backend.batch_schemas import BatchPredictionInput
 from backend.predictor import predict_transactions
 app = FastAPI(
@@ -42,16 +46,35 @@ def test_transaction(transaction: TransactionInput):
     }
 
 
+
 @app.post("/predict")
-def predict(transaction: TransactionInput):
-    return predict_transaction(transaction)
+def predict(
+    transaction: TransactionInput,
+    threshold: float = Query(
+        default=DEFAULT_THRESHOLD,
+        ge=0.0,
+        le=1.0
+    )
+):
+    return predict_transaction(transaction, threshold)
 
 
 @app.post("/predict/batch")
-def predict_batch(batch: BatchPredictionInput):
-    predictions = predict_transactions(batch.transactions)
+def predict_batch(
+    batch: BatchPredictionInput,
+    threshold: float = Query(
+        default=DEFAULT_THRESHOLD,
+        ge=0.0,
+        le=1.0
+    )
+):
+    predictions = predict_transactions(
+        batch.transactions,
+        threshold
+    )
 
     return {
         "total_transactions": len(predictions),
+        "threshold": threshold,
         "predictions": predictions
     }
