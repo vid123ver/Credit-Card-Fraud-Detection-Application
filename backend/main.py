@@ -1,6 +1,10 @@
 
 from fastapi import FastAPI, Query
-
+from fastapi import HTTPException
+from backend.model_service import (
+    get_model_performance,
+    get_model_metadata,
+)
 from backend.database import test_database_connection
 from backend.schemas import TransactionInput
 from backend.batch_schemas import BatchPredictionInput
@@ -106,3 +110,24 @@ def list_alerts(
         "total_alerts": len(alerts),
         "alerts": alerts
     }
+
+@app.get("/models/performance")
+def model_performance():
+    try:
+        return get_model_performance()
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        )
+
+
+@app.get("/models/metadata")
+def model_metadata():
+    try:
+        return get_model_metadata()
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=str(error)
+        )
