@@ -1,40 +1,28 @@
-
+import { useEffect, useMemo, useState } from "react";
 import {
   ShieldAlert, LayoutDashboard, CreditCard, Bell,
   ChartNoAxesCombined, Settings, Search, ArrowUpRight,
-  ArrowDownRight, ShieldCheck, Activity, Menu
+  ArrowDownRight, ShieldCheck, Activity, Menu,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
-  Tooltip, CartesianGrid, PieChart, Pie, Cell
+  Tooltip, CartesianGrid, PieChart, Pie, Cell,
 } from "recharts";
+import {
+  getHealth,
+  getTransactions,
+  getAlerts,
+  getModelPerformance,
+} from "./services/api";
 import "./App.css";
 
-const activity = [
-  { day: "Mon", transactions: 120, fraud: 12 },
-  { day: "Tue", transactions: 180, fraud: 18 },
-  { day: "Wed", transactions: 150, fraud: 10 },
-  { day: "Thu", transactions: 240, fraud: 24 },
-  { day: "Fri", transactions: 200, fraud: 15 },
-  { day: "Sat", transactions: 290, fraud: 30 },
-  { day: "Sun", transactions: 260, fraud: 20 },
-];
+const COLORS = {
+  Legitimate: "#22c55e",
+  Review: "#f59e0b",
+  Fraud: "#f43f5e",
+};
 
-const transactions = [
-  { id: "TXN-10042", customer: "Customer #104", amount: "$2,450.00", time: "10:42 AM", risk: "High", status: "Fraud" },
-  { id: "TXN-10041", customer: "Customer #087", amount: "$125.50", time: "10:38 AM", risk: "Low", status: "Legitimate" },
-  { id: "TXN-10040", customer: "Customer #221", amount: "$890.00", time: "10:31 AM", risk: "Medium", status: "Review" },
-  { id: "TXN-10039", customer: "Customer #056", amount: "$3,200.00", time: "10:25 AM", risk: "High", status: "Fraud" },
-  { id: "TXN-10038", customer: "Customer #193", amount: "$64.99", time: "10:19 AM", risk: "Low", status: "Legitimate" },
-];
-
-const distribution = [
-  { name: "Legitimate", value: 82, color: "#22c55e" },
-  { name: "Review", value: 12, color: "#f59e0b" },
-  { name: "Fraud", value: 6, color: "#f43f5e" },
-];
-
-function Sidebar() {
+function Sidebar({ alertCount }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -45,7 +33,7 @@ function Sidebar() {
       <nav>
         <a className="nav-item active" href="#dashboard"><LayoutDashboard size={18} /> Dashboard</a>
         <a className="nav-item" href="#transactions"><CreditCard size={18} /> Transactions</a>
-        <a className="nav-item" href="#alerts"><Bell size={18} /> Fraud Alerts <span className="nav-count">4</span></a>
+        <a className="nav-item" href="#alerts"><Bell size={18} /> Fraud Alerts <span className="nav-count">{alertCount}</span></a>
         <a className="nav-item" href="#analytics"><ChartNoAxesCombined size={18} /> Analytics</a>
       </nav>
       <div className="sidebar-bottom">
@@ -60,7 +48,7 @@ function Sidebar() {
   );
 }
 
-function StatCard({ title, value, change, positive, icon: Icon, color, note }) {
+function StatCard({ title, value, icon: Icon, color, note }) {
   return (
     <div className="stat-card">
       <div className="stat-top">
@@ -69,25 +57,166 @@ function StatCard({ title, value, change, positive, icon: Icon, color, note }) {
       </div>
       <div className="stat-value">{value}</div>
       <div className="stat-footer">
-        <span className={positive ? "change positive" : "change negative"}>
-          {positive ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}
-          {change}
-        </span>
         <span className="muted">{note}</span>
       </div>
     </div>
   );
 }
 
+function formatAmount(amount) {
+  const value = Number(amount);
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+      }).format(value)
+    : "—";
+}
+
+function getStatus(tx) {
+  if (tx.prediction === "Fraud") return "Fraud";
+  if (tx.risk_level === "Medium") return "Review";
+  return tx.prediction || "Unknown";
+}
+
 function Dashboard() {
+  const [transactions, setTransactions] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [performance, setPerformance] = useState(null);
+  const [health, setHealth] = useState("Checking");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDashboard() {
+      try {
+        const results = await Promise.allSettled([
+          getHealth(),
+          getTransactions(),
+          getAlerts(),
+          getModelPerformance(),
+        ]);
+
+        if (!active) return;
+
+        const [healthResult, txResult, alertsResult, perfResult] = results;
+
+        if (healthResult.status === "fulfilled") {
+          setHealth(healthResult.value.database || "Connected");
+        } else {
+          setHealth("Unavailable");
+        }
+
+        if (txResult.status === "fulfilled") {
+          setTransactions(txResult.value);
+        }
+
+        if (alertsResult.status === "fulfilled") {
+          setAlerts(alertsResult.value);
+        }
+
+        if (perfResult.status === "fulfilled") {
+          setPerformance(perfResult.value);
+        }
+
+        const failures = results.filter(
+          (result) => result.status === "rejected"
+        );
+
+        if (failures.length === results.length) {
+          setError("Could not connect to the backend. Check that FastAPI is running.");
+        } else if (failures.length > 0) {
+          setError("Some dashboard data could not be loaded. Check the backend endpoints.");
+        } else {
+          setError("");
+        }
+      } catch {
+        if (active) setError("Unable to load dashboard data.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const filteredTransactions = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return transactions.filter((tx) =>
+      String(tx.transaction_id ?? "")
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [transactions, search]);
+
+  const fraudCount = transactions.filter(
+    (tx) => tx.prediction === "Fraud"
+  ).length;
+
+  const legitimateCount = transactions.filter(
+    (tx) => tx.prediction === "Legitimate"
+  ).length;
+
+  const mediumCount = transactions.filter(
+    (tx) => tx.risk_level === "Medium"
+  ).length;
+
+  const total = transactions.length;
+  const fraudRate = total ? ((fraudCount / total) * 100).toFixed(2) : "0.00";
+
+  const distribution = [
+    { name: "Legitimate", value: legitimateCount, color: COLORS.Legitimate },
+    { name: "Review", value: mediumCount, color: COLORS.Review },
+    { name: "Fraud", value: fraudCount, color: COLORS.Fraud },
+  ].filter((item) => item.value > 0);
+
+  const activity = useMemo(() => {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const groups = new Map();
+
+    for (const tx of transactions) {
+      const date = tx.created_at ? new Date(tx.created_at) : null;
+      if (!date || Number.isNaN(date.getTime())) continue;
+
+      const key = date.toLocaleDateString();
+      if (!groups.has(key)) {
+        groups.set(key, {
+          day: days[date.getDay()],
+          transactions: 0,
+          fraud: 0,
+          timestamp: date.getTime(),
+        });
+      }
+
+      const group = groups.get(key);
+      group.transactions += 1;
+      if (tx.prediction === "Fraud") group.fraud += 1;
+    }
+
+    return [...groups.values()]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(-7);
+  }, [transactions]);
+
   return (
     <main className="main-content" id="dashboard">
       <header className="topbar">
         <div className="mobile-brand"><Menu size={22} /> FraudGuard</div>
         <div className="breadcrumb">Workspace <span>/</span> <strong>Dashboard</strong></div>
         <div className="top-actions">
-          <span className="live-badge"><span className="online-dot" /> LIVE SYSTEM</span>
-          <button className="icon-button" aria-label="Notifications"><Bell size={19} /></button>
+          <span className="live-badge">
+            <span className="online-dot" /> {health.toUpperCase()}
+          </span>
+          <button className="icon-button" aria-label="Notifications">
+            <Bell size={19} />
+          </button>
           <div className="avatar">FA</div>
         </div>
       </header>
@@ -99,21 +228,24 @@ function Dashboard() {
             <h1>Fraud Detection Dashboard</h1>
             <p>Monitor transactions, detect suspicious activity, and review fraud risks.</p>
           </div>
-          <div className="date-label"><Activity size={16} /> Demo data · Last 7 days</div>
+          <div className="date-label"><Activity size={16} /> Live database data</div>
         </section>
 
+        {error && <p role="alert">{error}</p>}
+        {loading && <p>Loading dashboard data…</p>}
+
         <section className="stats-grid">
-          <StatCard title="Total Transactions" value="24,586" change="12.8%" positive icon={CreditCard} color="blue" note="vs previous period" />
-          <StatCard title="Fraud Detected" value="184" change="8.2%" positive={false} icon={ShieldAlert} color="red" note="vs previous period" />
-          <StatCard title="Fraud Rate" value="0.75%" change="0.3%" positive icon={ChartNoAxesCombined} color="amber" note="vs previous period" />
-          <StatCard title="Transactions Cleared" value="24,402" change="99.25%" positive icon={ShieldCheck} color="green" note="of total transactions" />
+          <StatCard title="Total Transactions" value={total.toLocaleString()} icon={CreditCard} color="blue" note="Stored transactions" />
+          <StatCard title="Fraud Detected" value={fraudCount.toLocaleString()} icon={ShieldAlert} color="red" note="Predicted as fraud" />
+          <StatCard title="Fraud Rate" value={`${fraudRate}%`} icon={ChartNoAxesCombined} color="amber" note="Of stored transactions" />
+          <StatCard title="Transactions Cleared" value={legitimateCount.toLocaleString()} icon={ShieldCheck} color="green" note="Predicted legitimate" />
         </section>
 
         <section className="charts-grid" id="analytics">
           <div className="panel chart-panel">
             <div className="panel-heading">
-              <div><h2>Transaction Activity</h2><p>Transaction volume and detected fraud</p></div>
-              <span className="period-pill">Last 7 days⌄</span>
+              <div><h2>Transaction Activity</h2><p>Stored transaction volume and detected fraud</p></div>
+              <span className="period-pill">Last 7 recorded days</span>
             </div>
             <div className="legend">
               <span><i className="legend-blue" /> Transactions</span>
@@ -152,15 +284,19 @@ function Dashboard() {
                   <Tooltip contentStyle={{ background: "#151e30", border: "1px solid #303d53", borderRadius: 10 }} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="donut-center"><strong>100%</strong><span>Analyzed</span></div>
+              <div className="donut-center">
+                <strong>{total ? "100%" : "0%"}</strong>
+                <span>Analyzed</span>
+              </div>
             </div>
             <div className="distribution-legend">
-              {distribution.map(item => (
+              {distribution.map((item) => (
                 <div key={item.name} className="distribution-row">
                   <span><i style={{ background: item.color }} />{item.name}</span>
-                  <strong>{item.value}%</strong>
+                  <strong>{total ? `${((item.value / total) * 100).toFixed(1)}%` : "0%"}</strong>
                 </div>
               ))}
+              {total === 0 && <p>No transaction data yet.</p>}
             </div>
           </div>
         </section>
@@ -169,21 +305,40 @@ function Dashboard() {
           <div className="panel table-panel" id="transactions">
             <div className="panel-heading">
               <div><h2>Recent Transactions</h2><p>Latest processed card transactions</p></div>
-              <a className="text-link" href="#transactions">View all <ArrowUpRight size={15} /></a>
+              <span className="text-link">{filteredTransactions.length} records</span>
             </div>
-            <div className="table-search"><Search size={16} /><input placeholder="Search transaction ID..." /></div>
+            <div className="table-search">
+              <Search size={16} />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search transaction ID..."
+              />
+            </div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>TRANSACTION</th><th>AMOUNT</th><th>RISK</th><th>STATUS</th></tr></thead>
+                <thead>
+                  <tr><th>TRANSACTION</th><th>AMOUNT</th><th>RISK</th><th>STATUS</th></tr>
+                </thead>
                 <tbody>
-                  {transactions.map(tx => (
-                    <tr key={tx.id}>
-                      <td><strong>{tx.id}</strong><small>{tx.time} · {tx.customer}</small></td>
-                      <td>{tx.amount}</td>
-                      <td><span className={`risk risk-${tx.risk.toLowerCase()}`}>{tx.risk}</span></td>
-                      <td><span className={`status status-${tx.status.toLowerCase()}`}>{tx.status}</span></td>
-                    </tr>
-                  ))}
+                  {filteredTransactions.slice(0, 10).map((tx) => {
+                    const risk = tx.risk_level || "Low";
+                    const status = getStatus(tx);
+                    return (
+                      <tr key={`${tx._id || tx.transaction_id}`}>
+                        <td>
+                          <strong>{tx.transaction_id || "Unknown ID"}</strong>
+                          <small>{tx.created_at ? new Date(tx.created_at).toLocaleString() : "Time unavailable"}</small>
+                        </td>
+                        <td>{formatAmount(tx.Amount)}</td>
+                        <td><span className={`risk risk-${risk.toLowerCase()}`}>{risk}</span></td>
+                        <td><span className={`status status-${status.toLowerCase()}`}>{status}</span></td>
+                      </tr>
+                    );
+                  })}
+                  {!loading && filteredTransactions.length === 0 && (
+                    <tr><td colSpan="4">No matching transactions found.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -192,27 +347,58 @@ function Dashboard() {
           <div className="panel alerts-panel" id="alerts">
             <div className="panel-heading">
               <div><h2>Priority Alerts</h2><p>Transactions requiring attention</p></div>
-              <span className="alert-number">2 NEW</span>
+              <span className="alert-number">{alerts.length} ALERTS</span>
             </div>
-            <div className="alert-item">
-              <div className="alert-symbol"><ShieldAlert size={18} /></div>
-              <div className="alert-copy"><strong>Unusual transaction amount</strong><p>TXN-10042 · $2,450.00</p><span>2 minutes ago</span></div>
-              <span className="severity">HIGH</span>
-            </div>
-            <div className="alert-item">
-              <div className="alert-symbol"><ShieldAlert size={18} /></div>
-              <div className="alert-copy"><strong>Suspicious spending pattern</strong><p>TXN-10039 · $3,200.00</p><span>8 minutes ago</span></div>
-              <span className="severity">HIGH</span>
-            </div>
+            {alerts.slice(0, 5).map((alert) => (
+              <div className="alert-item" key={alert.alert_id}>
+                <div className="alert-symbol"><ShieldAlert size={18} /></div>
+                <div className="alert-copy">
+                  <strong>{alert.prediction || "Suspicious transaction"}</strong>
+                  <p>{alert.transaction_id} · {formatAmount(
+                    transactions.find((tx) => tx.transaction_id === alert.transaction_id)?.Amount
+                  )}</p>
+                  <span>{alert.created_at ? new Date(alert.created_at).toLocaleString() : "Time unavailable"}</span>
+                </div>
+                <span className="severity">{alert.risk_level || "HIGH"}</span>
+              </div>
+            ))}
+            {alerts.length === 0 && !loading && <p>No alerts found.</p>}
             <div className="alert-footer"><ShieldCheck size={16} /> Monitoring system is active</div>
           </div>
         </section>
-        <footer className="footer">FraudGuard Intelligence <span>AI-powered transaction monitoring</span></footer>
+
+        <section className="panel" style={{ marginTop: 20, padding: 20 }}>
+          <h2>Model Performance</h2>
+          {performance ? (
+            <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {JSON.stringify(performance, null, 2)}
+            </pre>
+          ) : (
+            <p>Model performance data unavailable.</p>
+          )}
+        </section>
+
+        <footer className="footer">
+          FraudGuard Intelligence <span>AI-powered transaction monitoring</span>
+        </footer>
       </div>
     </main>
   );
 }
 
 export default function App() {
-  return <div className="app-shell"><Sidebar /><Dashboard /></div>;
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    getAlerts()
+      .then((items) => setAlertCount(items.length))
+      .catch(() => setAlertCount(0));
+  }, []);
+
+  return (
+    <div className="app-shell">
+      <Sidebar alertCount={alertCount} />
+      <Dashboard />
+    </div>
+  );
 }
