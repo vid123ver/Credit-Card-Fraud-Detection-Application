@@ -25,4 +25,11 @@ export const getModelPerformance = async () => {
   return data;
 };
 
+
+export const getFraudAnalytics = async () => {
+  const response = await api.get("/analytics/fraud");
+  return response.data;
+};
+
+
 export default api;
