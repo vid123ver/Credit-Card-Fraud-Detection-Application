@@ -123,6 +123,44 @@ function getStatus(tx) {
   return tx.prediction || "Unknown";
 }
 
+function getMetricValue(data, candidates) {
+  if (!data || typeof data !== "object") return null;
+
+  const entries = Object.entries(data);
+
+  for (const candidate of candidates) {
+    const match = entries.find(
+      ([key, value]) =>
+        key.toLowerCase().replace(/[^a-z]/g, "") === candidate &&
+        (typeof value === "number" ||
+          (typeof value === "string" && value.trim() !== "" &&
+            Number.isFinite(Number(value))))
+    );
+
+    if (match) return Number(match[1]);
+  }
+
+  return null;
+}
+
+function MetricCard({ label, value }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-top">
+        <span>{label}</span>
+      </div>
+      <div className="stat-value">
+        {value == null
+          ? "—"
+          : `${(value <= 1 ? value * 100 : value).toFixed(2)}%`}
+      </div>
+      <div className="stat-footer">
+        <span className="muted">Evaluation metric</span>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const [transactions, setTransactions] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -258,38 +296,23 @@ function Dashboard() {
       ].filter((item) => item.value > 0)
     : [];
 
-  const activity = useMemo(() => {
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const groups = new Map();
 
-    for (const tx of transactions) {
-      const date = tx.created_at ? new Date(tx.created_at) : null;
+const activity = useMemo(() => {
+  const trends = analytics?.daily_trend ?? [];
 
-      if (!date || Number.isNaN(date.getTime())) continue;
+  return trends.map((item) => ({
+    day: item.date
+      ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone: "UTC",
+        })
+      : "Unknown",
+    transactions: item.transactions ?? 0,
+    fraud: item.fraud ?? 0,
+  }));
+}, [analytics]);
 
-      const key = date.toLocaleDateString();
-
-      if (!groups.has(key)) {
-        groups.set(key, {
-          day: days[date.getDay()],
-          transactions: 0,
-          fraud: 0,
-          timestamp: date.getTime(),
-        });
-      }
-
-      const group = groups.get(key);
-      group.transactions += 1;
-
-      if (tx.prediction === "Fraud") {
-        group.fraud += 1;
-      }
-    }
-
-    return [...groups.values()]
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .slice(-7);
-  }, [transactions]);
 
   return (
     <main className="main-content" id="dashboard">
@@ -680,25 +703,44 @@ function Dashboard() {
           </div>
         </section>
 
-        <section
-          className="panel"
-          style={{ marginTop: 20, padding: 20 }}
-        >
-          <h2>Model Performance</h2>
+       
+<section className="panel" style={{ marginTop: 20, padding: 20 }}>
+  <h2>Model Performance</h2>
+  <p>Performance metrics from the backend evaluation results.</p>
 
-          {performance ? (
-            <pre
-              style={{
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {JSON.stringify(performance, null, 2)}
-            </pre>
-          ) : (
-            <p>Model performance data unavailable.</p>
-          )}
-        </section>
+  {performance ? (
+    <>
+      <div className="stats-grid">
+        <MetricCard
+          label="Precision"
+          value={getMetricValue(performance, ["precision"])}
+        />
+        <MetricCard
+          label="Recall"
+          value={getMetricValue(performance, ["recall"])}
+        />
+        <MetricCard
+          label="F1 Score"
+          value={getMetricValue(performance, ["f1", "f1score"])}
+        />
+        <MetricCard
+          label="ROC-AUC"
+          value={getMetricValue(performance, ["rocauc", "aucroc"])}
+        />
+      </div>
+
+      <details style={{ marginTop: 16 }}>
+        <summary>View raw model performance data</summary>
+        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {JSON.stringify(performance, null, 2)}
+        </pre>
+      </details>
+    </>
+  ) : (
+    <p>Model performance data unavailable.</p>
+  )}
+</section>
+
 
         <footer className="footer">
           FraudGuard Intelligence{" "}
