@@ -1,5 +1,8 @@
+
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
 from backend.analytics_service import get_fraud_analytics
 from backend.model_service import (
     get_model_performance,
@@ -13,7 +16,11 @@ from backend.predictor import (
     predict_transactions,
     DEFAULT_THRESHOLD,
 )
-from backend.alert_service import create_alert, get_alerts
+from backend.alert_service import (
+    create_alert,
+    get_alerts,
+    update_alert_review,
+)
 from backend.transaction_service import (
     save_transaction,
     get_transactions,
@@ -45,6 +52,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --------------------------------------------------
+# Alert Review Request Schema
+# --------------------------------------------------
+
+class AlertReviewRequest(BaseModel):
+    status: str
+    notes: str = Field(default="", max_length=2000)
 
 
 # --------------------------------------------------
@@ -128,11 +144,7 @@ def predict(
 ):
     try:
         result = predict_transaction(transaction, threshold)
-
-        # Save transaction and prediction to MongoDB.
         save_transaction(transaction, result)
-
-        # Create an alert when applicable.
         result["alert"] = create_alert(result)
 
         return result
@@ -170,10 +182,7 @@ def predict_batch(
             batch.transactions,
             predictions,
         ):
-            # Save each transaction and its prediction.
             save_transaction(transaction, prediction)
-
-            # Create an alert when applicable.
             prediction["alert"] = create_alert(prediction)
 
         return {
@@ -193,26 +202,22 @@ def predict_batch(
 
 
 # --------------------------------------------------
-# Alert Management
+# Alert Management: Retrieve and Filter
 # --------------------------------------------------
 
 @app.get("/alerts")
 def list_alerts(
     status: str | None = Query(
         default=None,
-        pattern="^(Open|Reviewed|Resolved)$",
+        description=(
+            "Filter by status: Open, Under Review, "
+            "Confirmed Fraud, or False Positive"
+        ),
     ),
-    limit: int = Query(
-        default=100,
-        ge=1,
-        le=500,
-    ),
+    limit: int = Query(default=100, ge=1, le=500),
 ):
     try:
-        alerts = get_alerts(
-            status=status,
-            limit=limit,
-        )
+        alerts = get_alerts(status=status, limit=limit)
 
         return {
             "total_alerts": len(alerts),
@@ -223,6 +228,49 @@ def list_alerts(
         raise HTTPException(
             status_code=500,
             detail="Unable to retrieve alerts.",
+        ) from error
+
+
+# --------------------------------------------------
+# Alert Review Workflow
+# --------------------------------------------------
+
+@app.patch("/alerts/{alert_id}/review")
+def review_alert(
+    alert_id: str,
+    review: AlertReviewRequest,
+):
+    try:
+        result = update_alert_review(
+            alert_id=alert_id,
+            status=review.status,
+            notes=review.notes,
+        )
+
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Alert not found or invalid alert ID.",
+            )
+
+        return {
+            "message": "Alert review updated successfully",
+            **result,
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update alert review.",
         ) from error
 
 
@@ -270,10 +318,15 @@ def model_metadata():
         ) from error
 
 
+# --------------------------------------------------
+# Fraud Analytics API
+# --------------------------------------------------
+
 @app.get("/analytics/fraud")
 def fraud_analytics():
     try:
         return get_fraud_analytics()
+
     except Exception as error:
         raise HTTPException(
             status_code=500,
