@@ -31,5 +31,12 @@ export const getFraudAnalytics = async () => {
   return response.data;
 };
 
+export const updateAlertReview = async (alertId, status, notes) => {
+  const { data } = await api.patch(
+    `/alerts/${alertId}/review`,
+    { status, notes }
+  );
+  return data;
+};
 
 export default api;

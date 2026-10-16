@@ -30,6 +30,7 @@ import {
   getAlerts,
   getModelPerformance,
   getFraudAnalytics,
+  updateAlertReview,
 } from "./services/api";
 import "./App.css";
 
@@ -38,6 +39,13 @@ const COLORS = {
   Medium: "#f59e0b",
   High: "#f43f5e",
 };
+
+const REVIEW_STATUSES = [
+  "Open",
+  "Under Review",
+  "Confirmed Fraud",
+  "False Positive",
+];
 
 function Sidebar({ alertCount }) {
   return (
@@ -133,7 +141,8 @@ function getMetricValue(data, candidates) {
       ([key, value]) =>
         key.toLowerCase().replace(/[^a-z]/g, "") === candidate &&
         (typeof value === "number" ||
-          (typeof value === "string" && value.trim() !== "" &&
+          (typeof value === "string" &&
+            value.trim() !== "" &&
             Number.isFinite(Number(value))))
     );
 
@@ -170,6 +179,51 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+
+  // Chapter 23: Alert review workflow state
+  const [reviewNotes, setReviewNotes] = useState({});
+  const [reviewStatuses, setReviewStatuses] = useState({});
+  const [savingReview, setSavingReview] = useState({});
+  const [reviewMessages, setReviewMessages] = useState({});
+
+  async function refreshAlerts() {
+    const latestAlerts = await getAlerts();
+    setAlerts(latestAlerts);
+  }
+
+  async function handleReviewSave(alert) {
+    const id = alert.alert_id;
+    const status = reviewStatuses[id] ?? alert.status ?? "Open";
+    const notes = reviewNotes[id] ?? alert.notes ?? "";
+
+    setSavingReview((prev) => ({ ...prev, [id]: true }));
+    setReviewMessages((prev) => ({ ...prev, [id]: null }));
+
+    try {
+      await updateAlertReview(id, status, notes);
+      await refreshAlerts();
+
+      setReviewMessages((prev) => ({
+        ...prev,
+        [id]: {
+          type: "success",
+          text: "Review saved successfully.",
+        },
+      }));
+    } catch (err) {
+      setReviewMessages((prev) => ({
+        ...prev,
+        [id]: {
+          type: "error",
+          text:
+            err.response?.data?.detail ||
+            "Unable to save review. Check the backend connection.",
+        },
+      }));
+    } finally {
+      setSavingReview((prev) => ({ ...prev, [id]: false }));
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -273,7 +327,6 @@ function Dashboard() {
     ? ((fraudCount / total) * 100).toFixed(2)
     : "0.00";
 
-  // Use risk distribution returned by the backend analytics API.
   const riskDistribution = analytics?.risk_distribution;
 
   const distribution = riskDistribution
@@ -296,23 +349,21 @@ function Dashboard() {
       ].filter((item) => item.value > 0)
     : [];
 
+  const activity = useMemo(() => {
+    const trends = analytics?.daily_trend ?? [];
 
-const activity = useMemo(() => {
-  const trends = analytics?.daily_trend ?? [];
-
-  return trends.map((item) => ({
-    day: item.date
-      ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          timeZone: "UTC",
-        })
-      : "Unknown",
-    transactions: item.transactions ?? 0,
-    fraud: item.fraud ?? 0,
-  }));
-}, [analytics]);
-
+    return trends.map((item) => ({
+      day: item.date
+        ? new Date(`${item.date}T12:00:00Z`).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            timeZone: "UTC",
+          })
+        : "Unknown",
+      transactions: item.transactions ?? 0,
+      fraud: item.fraud ?? 0,
+    }));
+  }, [analytics]);
 
   return (
     <main className="main-content" id="dashboard">
@@ -479,7 +530,6 @@ const activity = useMemo(() => {
             </div>
           </div>
 
-          {/* Live risk distribution from /analytics/fraud */}
           <div className="panel distribution-panel">
             <div className="panel-heading">
               <div>
@@ -535,11 +585,8 @@ const activity = useMemo(() => {
             <div className="distribution-legend">
               {analytics &&
                 ["Low", "Medium", "High"].map((level) => {
-                  const count =
-                    analytics.risk_distribution?.[level] ?? 0;
-
-                  const analyticsTotal =
-                    analytics.total_transactions ?? 0;
+                  const count = analytics.risk_distribution?.[level] ?? 0;
+                  const analyticsTotal = analytics.total_transactions ?? 0;
 
                   const percentage = analyticsTotal
                     ? ((count / analyticsTotal) * 100).toFixed(1)
@@ -609,9 +656,7 @@ const activity = useMemo(() => {
                     return (
                       <tr key={tx._id || tx.transaction_id}>
                         <td>
-                          <strong>
-                            {tx.transaction_id || "Unknown ID"}
-                          </strong>
+                          <strong>{tx.transaction_id || "Unknown ID"}</strong>
                           <small>
                             {tx.created_at
                               ? new Date(tx.created_at).toLocaleString()
@@ -622,9 +667,7 @@ const activity = useMemo(() => {
                         <td>{formatAmount(tx.Amount)}</td>
 
                         <td>
-                          <span
-                            className={`risk risk-${risk.toLowerCase()}`}
-                          >
+                          <span className={`risk risk-${risk.toLowerCase()}`}>
                             {risk}
                           </span>
                         </td>
@@ -650,50 +693,126 @@ const activity = useMemo(() => {
             </div>
           </div>
 
+          {/* Chapter 23: Alert Review Workflow */}
           <div className="panel alerts-panel" id="alerts">
             <div className="panel-heading">
               <div>
                 <h2>Priority Alerts</h2>
-                <p>Transactions requiring attention</p>
+                <p>Review and document suspicious transactions</p>
               </div>
-              <span className="alert-number">
-                {alerts.length} ALERTS
-              </span>
+              <span className="alert-number">{alerts.length} ALERTS</span>
             </div>
 
-            {alerts.slice(0, 5).map((alert) => (
-              <div className="alert-item" key={alert.alert_id}>
-                <div className="alert-symbol">
-                  <ShieldAlert size={18} />
-                </div>
+            {alerts.slice(0, 5).map((alert) => {
+              const id = alert.alert_id;
+              const selectedStatus =
+                reviewStatuses[id] ?? alert.status ?? "Open";
+              const notes = reviewNotes[id] ?? alert.notes ?? "";
+              const message = reviewMessages[id];
 
-                <div className="alert-copy">
-                  <strong>
-                    {alert.prediction || "Suspicious transaction"}
-                  </strong>
+              return (
+                <div className="alert-item" key={id}>
+                  <div className="alert-symbol">
+                    <ShieldAlert size={18} />
+                  </div>
 
-                  <p>
-                    {alert.transaction_id} ·{" "}
-                    {formatAmount(
-                      transactions.find(
-                        (tx) =>
-                          tx.transaction_id === alert.transaction_id
-                      )?.Amount
-                    )}
-                  </p>
+                  <div
+                    className="alert-copy"
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    <strong>
+                      {alert.prediction || "Suspicious transaction"}
+                    </strong>
 
-                  <span>
-                    {alert.created_at
-                      ? new Date(alert.created_at).toLocaleString()
-                      : "Time unavailable"}
+                    <p>
+                      {alert.transaction_id} ·{" "}
+                      {formatAmount(
+                        transactions.find(
+                          (tx) =>
+                            tx.transaction_id === alert.transaction_id
+                        )?.Amount
+                      )}
+                    </p>
+
+                    <span>
+                      {alert.created_at
+                        ? new Date(alert.created_at).toLocaleString()
+                        : "Time unavailable"}
+                    </span>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 10,
+                        marginTop: 12,
+                      }}
+                    >
+                      <label>
+                        Review Status
+                        <select
+                          value={selectedStatus}
+                          onChange={(event) =>
+                            setReviewStatuses((prev) => ({
+                              ...prev,
+                              [id]: event.target.value,
+                            }))
+                          }
+                        >
+                          {REVIEW_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        Analyst Notes
+                        <textarea
+                          rows={3}
+                          maxLength={2000}
+                          placeholder="Enter investigation notes..."
+                          value={notes}
+                          onChange={(event) =>
+                            setReviewNotes((prev) => ({
+                              ...prev,
+                              [id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        disabled={Boolean(savingReview[id])}
+                        onClick={() => handleReviewSave(alert)}
+                      >
+                        {savingReview[id] ? "Saving..." : "Save Review"}
+                      </button>
+
+                      {message && (
+                        <p
+                          role="status"
+                          style={{
+                            color:
+                              message.type === "success"
+                                ? "#22c55e"
+                                : "#f87171",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {message.text}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <span className="severity">
+                    {alert.risk_level || "HIGH"}
                   </span>
                 </div>
-
-                <span className="severity">
-                  {alert.risk_level || "HIGH"}
-                </span>
-              </div>
-            ))}
+              );
+            })}
 
             {alerts.length === 0 && !loading && <p>No alerts found.</p>}
 
@@ -703,44 +822,50 @@ const activity = useMemo(() => {
           </div>
         </section>
 
-       
-<section className="panel" style={{ marginTop: 20, padding: 20 }}>
-  <h2>Model Performance</h2>
-  <p>Performance metrics from the backend evaluation results.</p>
+        <section
+          className="panel"
+          style={{ marginTop: 20, padding: 20 }}
+        >
+          <h2>Model Performance</h2>
+          <p>Performance metrics from the backend evaluation results.</p>
 
-  {performance ? (
-    <>
-      <div className="stats-grid">
-        <MetricCard
-          label="Precision"
-          value={getMetricValue(performance, ["precision"])}
-        />
-        <MetricCard
-          label="Recall"
-          value={getMetricValue(performance, ["recall"])}
-        />
-        <MetricCard
-          label="F1 Score"
-          value={getMetricValue(performance, ["f1", "f1score"])}
-        />
-        <MetricCard
-          label="ROC-AUC"
-          value={getMetricValue(performance, ["rocauc", "aucroc"])}
-        />
-      </div>
+          {performance ? (
+            <>
+              <div className="stats-grid">
+                <MetricCard
+                  label="Precision"
+                  value={getMetricValue(performance, ["precision"])}
+                />
+                <MetricCard
+                  label="Recall"
+                  value={getMetricValue(performance, ["recall"])}
+                />
+                <MetricCard
+                  label="F1 Score"
+                  value={getMetricValue(performance, ["f1", "f1score"])}
+                />
+                <MetricCard
+                  label="ROC-AUC"
+                  value={getMetricValue(performance, ["rocauc", "aucroc"])}
+                />
+              </div>
 
-      <details style={{ marginTop: 16 }}>
-        <summary>View raw model performance data</summary>
-        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-          {JSON.stringify(performance, null, 2)}
-        </pre>
-      </details>
-    </>
-  ) : (
-    <p>Model performance data unavailable.</p>
-  )}
-</section>
-
+              <details style={{ marginTop: 16 }}>
+                <summary>View raw model performance data</summary>
+                <pre
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {JSON.stringify(performance, null, 2)}
+                </pre>
+              </details>
+            </>
+          ) : (
+            <p>Model performance data unavailable.</p>
+          )}
+        </section>
 
         <footer className="footer">
           FraudGuard Intelligence{" "}
@@ -755,9 +880,22 @@ export default function App() {
   const [alertCount, setAlertCount] = useState(0);
 
   useEffect(() => {
-    getAlerts()
-      .then((items) => setAlertCount(items.length))
-      .catch(() => setAlertCount(0));
+    let active = true;
+
+    async function loadAlertCount() {
+      try {
+        const items = await getAlerts();
+        if (active) setAlertCount(items.length);
+      } catch {
+        if (active) setAlertCount(0);
+      }
+    }
+
+    loadAlertCount();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
